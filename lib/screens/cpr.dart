@@ -37,6 +37,8 @@ class CprProvider extends ChangeNotifier {
   String log = '';
   int timestamp = 0;
   final audioPlayer = AudioPlayer();
+  late final Timer audioTimer;
+  late final Timer countTimer;
 
   double get duration =>
       timeBetweenHalfPushes.reduce((value, element) => value + element) /
@@ -47,6 +49,8 @@ class CprProvider extends ChangeNotifier {
   void dispose() {
     super.dispose();
     _subscription.cancel();
+    audioTimer.cancel();
+    countTimer.cancel();
   }
 
   CprProvider()
@@ -54,7 +58,7 @@ class CprProvider extends ChangeNotifier {
         stopwatch = Stopwatch(),
         currentTime = "00:00",
         isWatchRunning = false {
-    Timer.periodic(const Duration(seconds: 2), (_) {
+    audioTimer = Timer.periodic(const Duration(seconds: 2), (_) {
       dev.log('Audio fired');
       if (isWatchRunning) {
         switch (_status) {
@@ -71,7 +75,7 @@ class CprProvider extends ChangeNotifier {
         }
       }
     });
-    Timer.periodic(
+    countTimer = Timer.periodic(
       const Duration(seconds: 1),
       (timer) {
         final currentDuration = stopwatch.elapsed;
@@ -84,11 +88,18 @@ class CprProvider extends ChangeNotifier {
     );
     timeBetweenHalfPushes.addFirst(0);
     _subscription = userAccelerometerEvents.listen((event) {
+      dev.log('New acc event, is watch running: $isWatchRunning');
       if (!isWatchRunning) {
         return;
       }
       final newz = event.z;
       timestamp = DateTime.now().millisecondsSinceEpoch;
+      final timeFromLastHalfPush = timestamp - lastRegisteredHalfPush;
+      if (timeFromLastHalfPush > maximumRecognizableDuration) {
+        timeBetweenHalfPushes.clear();
+        timeBetweenHalfPushes.add(0);
+        lastMaxAccleration = 0;
+      }
       if (z * newz < 0) {
         if (maxInEpoch > threshold && minInEpoch < -threshold) {
           final timeFromLastHalfPush = timestamp - lastRegisteredHalfPush;
@@ -117,7 +128,8 @@ class CprProvider extends ChangeNotifier {
       x = event.x;
       y = event.y;
       z = event.z;
-
+      dev.log('duration: ${duration.toString()}');
+      dev.log('last acceleration: ${lastMaxAccleration.toString()}');
       if (duration > standardDuration) {
         _status = PushStatus.pushFast;
         stopwatch.stop();
@@ -156,6 +168,7 @@ class CprProvider extends ChangeNotifier {
 
   void stopWatch() {
     stopwatch.stop();
+    stopwatch.reset();
     isWatchRunning = false;
     _status = PushStatus.notPushing;
     notifyListeners();
